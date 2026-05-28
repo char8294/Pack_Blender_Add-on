@@ -211,8 +211,15 @@ class QVR_Props(PropertyGroup):
         default='VIEWPORT'
     )
     output_dir: StringProperty(name="Output Folder", subtype='DIR_PATH', default="//renders/")
-    filename_prefix: StringProperty(name="Prefix", default="render")
-    use_timestamp: BoolProperty(name="Append Timestamp", default=True)
+
+    # --- Render & Save naming ---
+    render_filename: StringProperty(name="Filename", default="render", description="ชื่อไฟล์สำหรับ Render & Save")
+    render_timestamp: BoolProperty(name="Timestamp", default=True, description="เพิ่มวันที่-เวลาต่อท้ายชื่อไฟล์")
+
+    # --- Batch naming ---
+    batch_prefix: StringProperty(name="Prefix", default="", description="คำนำหน้าต่อตรงกับชื่อ Object")
+    batch_suffix: StringProperty(name="Suffix", default="", description="คำต่อท้ายชื่อ Object")
+    batch_timestamp: BoolProperty(name="Timestamp", default=True, description="เพิ่มวันที่-เวลาต่อท้ายชื่อไฟล์ Batch")
     file_format: EnumProperty(name="Format", items=[('PNG',"PNG",""),('JPEG',"JPEG","")], default='PNG')
     color_depth: EnumProperty(name="Depth", items=[('8',"8-bit",""),('16',"16-bit","")], default='8')
     jpeg_quality: IntProperty(name="JPEG Quality", min=1, max=100, default=95)
@@ -399,8 +406,8 @@ class QVR_OT_render_save(Operator):
         props = scene.qvr_props
 
         out_dir = ensure_output_dir(props.output_dir)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S") if props.use_timestamp else ""
-        base = props.filename_prefix + (f"_{ts}" if ts else "")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S") if props.render_timestamp else ""
+        base = props.render_filename + (f"_{ts}" if ts else "")
         ext = apply_render_size_and_format(scene, props)
         scene.render.filepath = os.path.join(out_dir, base + ext)
 
@@ -441,13 +448,18 @@ class QVR_OT_batch_render_selected(Operator):
 
         out_dir = ensure_output_dir(props.output_dir)
         ext = apply_render_size_and_format(scene, props)
-        ts  = datetime.now().strftime("%Y%m%d_%H%M%S") if props.use_timestamp else ""
+        ts  = datetime.now().strftime("%Y%m%d_%H%M%S") if props.batch_timestamp else ""
 
         rendered = 0
         for obj in sel:
             safe = sanitize_name(obj.name)
-            parts = [props.filename_prefix, safe, ts] if ts else [props.filename_prefix, safe]
-            scene.render.filepath = os.path.join(out_dir, "_".join(parts) + ext)
+            # สร้างชื่อ: prefix + ObjName + suffix + timestamp
+            name = props.batch_prefix + safe
+            if props.batch_suffix:
+                name += "_" + props.batch_suffix
+            if ts:
+                name += "_" + ts
+            scene.render.filepath = os.path.join(out_dir, name + ext)
             try:
                 render_core(context, save_file=True, batch_objects=[obj])
                 rendered += 1
@@ -515,8 +527,6 @@ class QVR_PT_panel(Panel):
         box = layout.box()
         box.label(text="Output", icon='FILE_FOLDER')
         box.prop(props, "output_dir", text="")
-        box.prop(props, "filename_prefix")
-        box.prop(props, "use_timestamp")
 
         row = box.row(align=True)
         row.prop(props, "file_format", text="")
@@ -526,9 +536,21 @@ class QVR_PT_panel(Panel):
             row.prop(props, "jpeg_quality")
 
         # ═══════════ Render ═══════════
+        ext = ".png" if props.file_format == 'PNG' else ".jpg"
+
         box = layout.box()
         box.label(text="Render", icon='RENDER_STILL')
         box.prop(props, "render_mode", text="")
+
+        box.prop(props, "render_filename")
+        box.prop(props, "render_timestamp")
+
+        # Preview ชื่อไฟล์
+        ts_r = "_20260101_120000" if props.render_timestamp else ""
+        row = box.row()
+        row.alignment = 'LEFT'
+        row.scale_y = 0.7
+        row.label(text=f"  → {props.render_filename}{ts_r}{ext}", icon='INFO')
 
         row = box.row(align=True)
         row.scale_y = 1.5
@@ -536,9 +558,21 @@ class QVR_PT_panel(Panel):
         row.operator("qvr.render_preview", text="Preview", icon='RESTRICT_VIEW_OFF')
 
         # ── Batch ──
-        box.separator()
+        box = layout.box()
+        box.label(text="Batch Render", icon='RENDER_ANIMATION')
+
+        box.prop(props, "batch_prefix")
+        box.prop(props, "batch_suffix")
+        box.prop(props, "batch_timestamp")
+
+        # Preview ชื่อไฟล์
+        ts_b = "_20260101_120000" if props.batch_timestamp else ""
+        sfx  = f"_{props.batch_suffix}" if props.batch_suffix else ""
         row = box.row()
-        row.label(text="Batch Render", icon='RENDER_ANIMATION')
+        row.alignment = 'LEFT'
+        row.scale_y = 0.7
+        row.label(text=f"  → {props.batch_prefix}[ObjName]{sfx}{ts_b}{ext}", icon='INFO')
+
         col = box.column(align=True)
         col.scale_y = 1.2
         col.operator("qvr.batch_render_selected", text="Batch Render Selected", icon='DOCUMENTS')

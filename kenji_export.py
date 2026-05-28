@@ -1,6 +1,7 @@
 import bpy
 import os
 import sys
+import json
 
 bl_info = {
     "name": "Kenji Export",
@@ -58,6 +59,11 @@ class BATCH_FBX_Properties(bpy.types.PropertyGroup):
     force_shade_smooth: bpy.props.BoolProperty(
         name="Force Shade Smooth",
         description="Clear sharp edges/custom normals and apply smooth shading for the exported file only",
+        default=False
+    )
+    restore_biped_names: bpy.props.BoolProperty(
+        name="Restore Biped Names",
+        description="Export with original Biped bone names (restore from biped_name_mapping)",
         default=False
     )
 
@@ -179,7 +185,33 @@ class BATCH_FBX_OT_export(bpy.types.Operator):
         original_active = context.view_layer.objects.active
         original_selected = list(context.selected_objects)
         force_smooth = props.force_shade_smooth
-        
+        restore_biped = props.restore_biped_names
+
+        # --- Duplicate Armature if Restore Biped Names is enabled ---
+        temp_armature = None
+        export_armature = armature
+        bone_mapping = None
+
+        if restore_biped and armature.type == 'ARMATURE' and "biped_name_mapping" in armature.data:
+            bone_mapping = json.loads(armature.data["biped_name_mapping"])
+            if bone_mapping:
+                # Create a full independent copy of the armature
+                temp_arm_data = armature.data.copy()
+                temp_armature = armature.copy()
+                temp_armature.data = temp_arm_data
+                # Clear animation data so bone rename won't corrupt shared Actions
+                if temp_armature.animation_data:
+                    temp_armature.animation_data_clear()
+                # Link to scene so it can be exported
+                context.collection.objects.link(temp_armature)
+                # Rename bones back to original names on the COPY
+                for new_name, old_name in bone_mapping.items():
+                    bone = temp_arm_data.bones.get(new_name)
+                    if bone:
+                        bone.name = old_name
+                export_armature = temp_armature
+
+        # --- Export each mesh ---
         count = 0
         errors = []
         for mesh in meshes:
@@ -188,8 +220,9 @@ class BATCH_FBX_OT_export(bpy.types.Operator):
             temp_mesh = None
             export_mesh = mesh
             original_name = mesh.name
+            need_duplicate = force_smooth or restore_biped
             
-            if force_smooth:
+            if need_duplicate:
                 # Duplicate the mesh
                 mesh.select_set(True)
                 context.view_layer.objects.active = mesh
@@ -197,37 +230,55 @@ class BATCH_FBX_OT_export(bpy.types.Operator):
                 export_mesh = context.active_object
                 temp_mesh = export_mesh
                 
-                # Apply smoothing robustly
-                if temp_mesh.data.has_custom_normals:
-                    try:
-                        bpy.ops.mesh.customdata_custom_splitnormals_clear()
-                    except:
-                        pass
-                
-                # Remove modifiers that generate sharp edges dynamically
-                for mod in temp_mesh.modifiers:
-                    is_smooth_nodes = (mod.type == 'NODES' and mod.node_group and "Smooth by Angle" in mod.node_group.name)
-                    is_smooth_name = ("Smooth by Angle" in mod.name)
-                    is_edge_split = (mod.type == 'EDGE_SPLIT')
+                # --- Force Shade Smooth (on duplicate) ---
+                if force_smooth:
+                    if temp_mesh.data.has_custom_normals:
+                        try:
+                            bpy.ops.mesh.customdata_custom_splitnormals_clear()
+                        except:
+                            pass
                     
-                    if is_smooth_nodes or is_smooth_name or is_edge_split:
-                        temp_mesh.modifiers.remove(mod)
+                    # Remove modifiers that generate sharp edges dynamically
+                    for mod in list(temp_mesh.modifiers):
+                        is_smooth_nodes = (mod.type == 'NODES' and mod.node_group and "Smooth by Angle" in mod.node_group.name)
+                        is_smooth_name = ("Smooth by Angle" in mod.name)
+                        is_edge_split = (mod.type == 'EDGE_SPLIT')
+                        
+                        if is_smooth_nodes or is_smooth_name or is_edge_split:
+                            temp_mesh.modifiers.remove(mod)
+                    
+                    temp_mesh.data.polygons.foreach_set("use_smooth", [True] * len(temp_mesh.data.polygons))
+                    for edge in temp_mesh.data.edges:
+                        edge.use_edge_sharp = False
+                    temp_mesh.data.update()
                 
-                # Use foreach_set for efficiency on large meshes
-                temp_mesh.data.polygons.foreach_set("use_smooth", [True] * len(temp_mesh.data.polygons))
-                for edge in temp_mesh.data.edges:
-                    edge.use_edge_sharp = False
-                temp_mesh.data.update()
+                # --- Restore Biped Vertex Group Names (on duplicate) ---
+                if restore_biped and bone_mapping:
+                    # Use biped_vg_mapping if available, else use bone_mapping as fallback
+                    vg_mapping = bone_mapping
+                    if "biped_vg_mapping" in mesh:
+                        try:
+                            vg_mapping = json.loads(mesh["biped_vg_mapping"])
+                        except:
+                            pass
+                    for new_name, old_name in vg_mapping.items():
+                        vg = temp_mesh.vertex_groups.get(new_name)
+                        if vg:
+                            vg.name = old_name
+                    # Update armature modifier to point to temp armature
+                    if temp_armature:
+                        for mod in temp_mesh.modifiers:
+                            if mod.type == 'ARMATURE' and mod.object == armature:
+                                mod.object = temp_armature
                 
                 # Fix naming so FBX internal nodes are correct
-                # Use a more unique temp name to avoid collisions
                 mesh.name = original_name + "_temp_export"
                 export_mesh.name = original_name
                 
                 bpy.ops.object.select_all(action='DESELECT')
             
             # Select armature and mesh for export
-            armature.select_set(True)
+            export_armature.select_set(True)
             export_mesh.select_set(True)
             context.view_layer.objects.active = export_mesh
             
@@ -251,6 +302,13 @@ class BATCH_FBX_OT_export(bpy.types.Operator):
                 if temp_data.users == 0:
                     bpy.data.meshes.remove(temp_data)
                 mesh.name = original_name
+
+        # --- Cleanup temp armature ---
+        if temp_armature:
+            temp_arm_data = temp_armature.data
+            bpy.data.objects.remove(temp_armature, do_unlink=True)
+            if temp_arm_data.users == 0:
+                bpy.data.armatures.remove(temp_arm_data)
 
         # Restore original selection
         bpy.ops.object.select_all(action='DESELECT')
@@ -304,10 +362,13 @@ class BATCH_FBX_PT_panel(bpy.types.Panel):
         box = layout.box()
         box.label(text="3. Export Settings:", icon='EXPORT')
         box.prop(props, "export_dir")
+        box.prop(props, "preset_enum", text="Preset")
         
-        row = box.row()
-        row.prop(props, "preset_enum", text="Preset")
-        row.prop(props, "force_shade_smooth", text="Shade Smooth")
+        # Options sub-box
+        opt_box = box.box()
+        opt_box.label(text="Options:", icon='OPTIONS')
+        opt_box.prop(props, "force_shade_smooth")
+        opt_box.prop(props, "restore_biped_names")
         
         layout.separator()
         

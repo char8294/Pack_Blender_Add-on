@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Biped Names Helper",
     "author": "Gemini CLI",
-    "version": (1, 1),
+    "version": (1, 2),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Biped Names",
     "description": "Temporarily renames Biped bones/VGs to .L/.R for symmetry and mirroring weights",
@@ -10,6 +10,69 @@ bl_info = {
 
 import bpy
 import json
+
+def get_all_fcurves(action):
+    """Get all F-Curves from an action, supporting both Legacy and Layered (5.1+) API."""
+    fcurves = []
+    # Layered Action (Blender 5.1+)
+    if hasattr(action, 'is_action_layered') and action.is_action_layered:
+        for layer in action.layers:
+            for strip in layer.strips:
+                if hasattr(strip, 'channelbags'):
+                    for cb in strip.channelbags:
+                        fcurves.extend(cb.fcurves)
+    # Legacy Action (Blender 4.x and earlier)
+    elif hasattr(action, 'fcurves'):
+        fcurves.extend(action.fcurves)
+    return fcurves
+
+def rename_action_paths(mapping):
+    """
+    Rename bone data_paths and F-Curve group names in ALL actions in the blend file.
+    mapping: dict of {new_name: old_name}
+    Called AFTER bones are renamed, converts old_name -> new_name in paths and groups.
+    """
+    if not mapping:
+        return
+    path_pairs = []
+    name_pairs = {}  # old_name -> new_name for group renaming
+    for new_name, old_name in mapping.items():
+        path_pairs.append(('pose.bones["' + old_name + '"]', 'pose.bones["' + new_name + '"]'))
+        name_pairs[old_name] = new_name
+
+    for action in bpy.data.actions:
+        for fc in get_all_fcurves(action):
+            # Rename data_path
+            for old_path, new_path in path_pairs:
+                if old_path in fc.data_path:
+                    fc.data_path = fc.data_path.replace(old_path, new_path)
+            # Rename F-Curve group name
+            if fc.group and fc.group.name in name_pairs:
+                fc.group.name = name_pairs[fc.group.name]
+
+def restore_action_paths(mapping):
+    """
+    Restore bone data_paths and F-Curve group names in ALL actions.
+    mapping: dict of {new_name: old_name}
+    Called BEFORE bones are restored, converts new_name -> old_name in paths and groups.
+    """
+    if not mapping:
+        return
+    path_pairs = []
+    name_pairs = {}  # new_name -> old_name for group restoring
+    for new_name, old_name in mapping.items():
+        path_pairs.append(('pose.bones["' + new_name + '"]', 'pose.bones["' + old_name + '"]'))
+        name_pairs[new_name] = old_name
+
+    for action in bpy.data.actions:
+        for fc in get_all_fcurves(action):
+            # Restore data_path
+            for cur_path, orig_path in path_pairs:
+                if cur_path in fc.data_path:
+                    fc.data_path = fc.data_path.replace(cur_path, orig_path)
+            # Restore F-Curve group name
+            if fc.group and fc.group.name in name_pairs:
+                fc.group.name = name_pairs[fc.group.name]
 
 def rename_to_standard(obj):
     if not obj: return
@@ -32,6 +95,8 @@ def rename_to_standard(obj):
         if mapping:
             # Store mapping in the armature data block
             obj.data["biped_name_mapping"] = json.dumps(mapping)
+            # Update F-Curve paths in ALL actions
+            rename_action_paths(mapping)
                 
     # Handle Mesh Vertex Groups
     if obj.type == 'MESH':
@@ -62,6 +127,8 @@ def restore_original_names(obj):
     if obj.type == 'ARMATURE' and "biped_name_mapping" in obj.data:
         try:
             mapping = json.loads(obj.data["biped_name_mapping"])
+            # Restore F-Curve paths in ALL actions BEFORE restoring bone names
+            restore_action_paths(mapping)
             for new_name, old_name in mapping.items():
                 if new_name in obj.data.bones:
                     obj.data.bones[new_name].name = old_name
