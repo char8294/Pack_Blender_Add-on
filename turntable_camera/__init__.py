@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 6),
+    "version": (1, 1, 7),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -984,9 +984,21 @@ class TURNTABLE_OT_check_update(Operator):
                     req_cl.add_header('User-Agent', 'Blender-Addon-Updater')
                     with urllib.request.urlopen(req_cl, timeout=5) as res_cl:
                         cl_content = res_cl.read().decode('utf-8')
-                        lines = [line.strip() for line in cl_content.split('\n') if line.strip()]
-                        # เก็บข้อความ 5 บรรทัดแรก เพื่อไม่ให้ล้น UI
-                        _update_info["changelog"] = lines[:5]
+                        wrapped_lines = []
+                        for line in cl_content.split('\n'):
+                            line = line.strip()
+                            if not line: continue
+                            
+                            while len(line) > 42:
+                                split_at = line.rfind(' ', 0, 42)
+                                if split_at == -1:
+                                    split_at = 42
+                                wrapped_lines.append(line[:split_at])
+                                line = "  " + line[split_at:].strip()
+                            wrapped_lines.append(line)
+
+                        # เก็บข้อความเพื่อไม่ให้ล้น UI
+                        _update_info["changelog"] = wrapped_lines[:15]
                 except:
                     pass
 
@@ -1139,9 +1151,9 @@ class TURNTABLE_PT_main_panel(Panel):
         # ── Preset ──
         box = layout.box()
         box.label(text="Preset", icon='PRESET')
-        row = box.row(align=True)
-        row.prop(props, "preset", text="")
-        row.operator("turntable.apply_preset", text="Apply", icon='CHECKMARK')
+        split = box.split(factor=0.75, align=True)
+        split.prop(props, "preset", text="")
+        split.operator("turntable.apply_preset", text="Apply")
         box.separator(factor=0.5)
 
         # แสดง FPS / Frames (แก้ไขได้)
