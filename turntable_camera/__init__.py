@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 7),
+    "version": (1, 1, 8),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -989,13 +989,19 @@ class TURNTABLE_OT_check_update(Operator):
                             line = line.strip()
                             if not line: continue
                             
-                            while len(line) > 42:
-                                split_at = line.rfind(' ', 0, 42)
-                                if split_at == -1:
-                                    split_at = 42
-                                wrapped_lines.append(line[:split_at])
-                                line = "  " + line[split_at:].strip()
-                            wrapped_lines.append(line)
+                            is_first = True
+                            while len(line) > 45:
+                                split_at = line.rfind(' ', 0, 45)
+                                if split_at <= 0:
+                                    split_at = 45
+                                
+                                chunk = line[:split_at]
+                                wrapped_lines.append(chunk if is_first else "  " + chunk)
+                                line = line[split_at:].strip()
+                                is_first = False
+                                
+                            if line:
+                                wrapped_lines.append(line if is_first else "  " + line)
 
                         # เก็บข้อความเพื่อไม่ให้ล้น UI
                         _update_info["changelog"] = wrapped_lines[:15]
