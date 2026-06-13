@@ -1,5 +1,10 @@
 import bpy
 import math
+import os
+import re
+import json
+import urllib.request
+import urllib.error
 from mathutils import Vector
 from bpy.props import (
     EnumProperty,
@@ -14,11 +19,35 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 0),
+    "version": (1, 1, 1),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
     "category": "Animation",
+}
+
+# =====================================================================
+#  GitHub Update Config
+# =====================================================================
+
+GITHUB_OWNER = "char8294"
+GITHUB_REPO = "Pack_Blender_Add-on"
+GITHUB_ADDON_FOLDER = "turntable_camera"
+GITHUB_RAW_URL = (
+    f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}"
+    f"/main/{GITHUB_ADDON_FOLDER}/__init__.py"
+)
+GITHUB_API_CONTENTS = (
+    f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
+    f"/contents/{GITHUB_ADDON_FOLDER}"
+)
+
+_update_info = {
+    "checked": False,
+    "has_update": False,
+    "current_version": (0, 0, 0),
+    "latest_version": (0, 0, 0),
+    "error": "",
 }
 
 # =====================================================================
@@ -901,6 +930,170 @@ class TURNTABLE_OT_clear_animation(Operator):
 
 
 # =====================================================================
+#  GitHub Update Operators
+# =====================================================================
+
+
+class TURNTABLE_OT_check_update(Operator):
+    """ตรวจสอบอัปเดตจาก GitHub"""
+    bl_idname = "turntable.check_update"
+    bl_label = "Check for Updates"
+
+    def execute(self, context):
+        global _update_info
+        _update_info["error"] = ""
+        _update_info["current_version"] = bl_info["version"]
+
+        try:
+            req = urllib.request.Request(GITHUB_RAW_URL)
+            req.add_header('User-Agent', 'Blender-Addon-Updater')
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                content = response.read().decode('utf-8')
+
+            # Parse version from bl_info
+            match = re.search(
+                r'"version"\s*:\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)',
+                content
+            )
+            if match:
+                latest = (
+                    int(match.group(1)),
+                    int(match.group(2)),
+                    int(match.group(3)),
+                )
+                _update_info["latest_version"] = latest
+            else:
+                _update_info["error"] = "ไม่สามารถอ่านเวอร์ชันจาก GitHub ได้"
+                _update_info["checked"] = True
+                bpy.ops.turntable.update_popup('INVOKE_DEFAULT')
+                return {'CANCELLED'}
+
+            _update_info["has_update"] = latest > bl_info["version"]
+            _update_info["checked"] = True
+
+        except urllib.error.URLError as e:
+            _update_info["error"] = f"ไม่สามารถเชื่อมต่อ: {e.reason}"
+            _update_info["checked"] = True
+        except Exception as e:
+            _update_info["error"] = str(e)
+            _update_info["checked"] = True
+
+        bpy.ops.turntable.update_popup('INVOKE_DEFAULT')
+        return {'FINISHED'}
+
+
+class TURNTABLE_OT_update_popup(Operator):
+    """แสดงข้อมูลเวอร์ชันและอัปเดต"""
+    bl_idname = "turntable.update_popup"
+    bl_label = "Turntable Camera — Update"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        info = _update_info
+
+        if info["error"]:
+            layout.label(text="เกิดข้อผิดพลาด:", icon='ERROR')
+            layout.label(text=info["error"])
+            return
+
+        if not info["checked"]:
+            layout.label(text="ยังไม่ได้ตรวจสอบ", icon='INFO')
+            return
+
+        current = ".".join(str(v) for v in info["current_version"])
+        latest = ".".join(str(v) for v in info["latest_version"])
+
+        layout.label(text=f"เวอร์ชันปัจจุบัน:  v{current}", icon='PACKAGE')
+        layout.label(text=f"เวอร์ชันล่าสุด:      v{latest}", icon='WORLD')
+
+        layout.separator()
+
+        if info["has_update"]:
+            box = layout.box()
+            box.label(text="มีเวอร์ชันใหม่!", icon='INFO')
+            box.operator("turntable.do_update",
+                         text="Update Now",
+                         icon='IMPORT')
+        else:
+            layout.label(text="เวอร์ชันล่าสุดแล้ว ✓", icon='CHECKMARK')
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+def _delayed_reload_scripts():
+    """Reload scripts หลังจาก delay สั้นๆ เพื่อให้ operator ทำงานเสร็จก่อน"""
+    bpy.ops.script.reload()
+    return None
+
+
+class TURNTABLE_OT_do_update(Operator):
+    """ดาวน์โหลดและติดตั้งอัปเดตจาก GitHub"""
+    bl_idname = "turntable.do_update"
+    bl_label = "Update Add-on"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        try:
+            # ดึงรายการไฟล์จาก GitHub API
+            req = urllib.request.Request(GITHUB_API_CONTENTS)
+            req.add_header('User-Agent', 'Blender-Addon-Updater')
+
+            with urllib.request.urlopen(req, timeout=15) as response:
+                files = json.loads(response.read().decode('utf-8'))
+
+            # หา path ที่ add-on ติดตั้งอยู่
+            addon_path = os.path.join(
+                bpy.utils.user_resource('SCRIPTS'),
+                "addons",
+                GITHUB_ADDON_FOLDER,
+            )
+            os.makedirs(addon_path, exist_ok=True)
+
+            updated_count = 0
+            for file_info in files:
+                if file_info.get("type") != "file":
+                    continue
+
+                file_name = file_info["name"]
+                download_url = file_info.get("download_url")
+                if not download_url:
+                    continue
+
+                req = urllib.request.Request(download_url)
+                req.add_header('User-Agent', 'Blender-Addon-Updater')
+
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    content = response.read()
+
+                file_path = os.path.join(addon_path, file_name)
+                with open(file_path, 'wb') as f:
+                    f.write(content)
+                updated_count += 1
+
+            self.report(
+                {'INFO'},
+                f"อัปเดตเสร็จ! ({updated_count} ไฟล์) กำลัง Reload Scripts..."
+            )
+
+            # Reload scripts หลัง delay เพื่อให้ operator จบก่อน
+            bpy.app.timers.register(
+                _delayed_reload_scripts,
+                first_interval=0.5,
+            )
+
+        except Exception as e:
+            self.report({'ERROR'}, f"อัปเดตล้มเหลว: {str(e)}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
+# =====================================================================
 #  UI Panel
 # =====================================================================
 
@@ -917,7 +1110,9 @@ class TURNTABLE_PT_main_panel(Panel):
         props = context.scene.turntable_props
 
         # ── Mode ──
-        layout.prop(props, "mode", text="Mode")
+        row = layout.row(align=True)
+        row.prop(props, "mode", text="Mode")
+        row.operator("turntable.check_update", text="", icon='WORLD')
         layout.separator()
 
         # ── Preset ──
@@ -1056,6 +1251,9 @@ classes = (
     TURNTABLE_OT_start_turntable,
     TURNTABLE_OT_rotate_models,
     TURNTABLE_OT_clear_animation,
+    TURNTABLE_OT_check_update,
+    TURNTABLE_OT_update_popup,
+    TURNTABLE_OT_do_update,
     TURNTABLE_PT_main_panel,
 )
 
