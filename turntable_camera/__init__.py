@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 1),
+    "version": (1, 1, 2),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -1015,7 +1015,13 @@ class TURNTABLE_OT_update_popup(Operator):
         if info["has_update"]:
             box = layout.box()
             box.label(text="มีเวอร์ชันใหม่!", icon='INFO')
-            box.operator("turntable.do_update",
+            
+            # อธิบายให้ผู้ใช้ทราบว่าอัปเดตเสร็จต้องทำอะไรต่อ
+            box.label(text="* เมื่อกด Update Now เสร็จแล้ว", icon='ERROR')
+            box.label(text="  โปรด Restart Blender หรือกดปุ่ม 🔄 (Reload Scripts)")
+            
+            row = box.row()
+            row.operator("turntable.do_update",
                          text="Update Now",
                          icon='IMPORT')
         else:
@@ -1023,12 +1029,6 @@ class TURNTABLE_OT_update_popup(Operator):
 
     def execute(self, context):
         return {'FINISHED'}
-
-
-def _delayed_reload_scripts():
-    """Reload scripts หลังจาก delay สั้นๆ เพื่อให้ operator ทำงานเสร็จก่อน"""
-    bpy.ops.script.reload()
-    return None
 
 
 class TURNTABLE_OT_do_update(Operator):
@@ -1077,13 +1077,7 @@ class TURNTABLE_OT_do_update(Operator):
 
             self.report(
                 {'INFO'},
-                f"อัปเดตเสร็จ! ({updated_count} ไฟล์) กำลัง Reload Scripts..."
-            )
-
-            # Reload scripts หลัง delay เพื่อให้ operator จบก่อน
-            bpy.app.timers.register(
-                _delayed_reload_scripts,
-                first_interval=0.5,
+                f"อัปเดตเสร็จ! ({updated_count} ไฟล์) กรุณา Restart Blender หรือกดปุ่ม Reload Scripts (🔄)"
             )
 
         except Exception as e:
@@ -1113,6 +1107,7 @@ class TURNTABLE_PT_main_panel(Panel):
         row = layout.row(align=True)
         row.prop(props, "mode", text="Mode")
         row.operator("turntable.check_update", text="", icon='WORLD')
+        row.operator("script.reload", text="", icon='FILE_REFRESH')
         layout.separator()
 
         # ── Preset ──
