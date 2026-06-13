@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 3),
+    "version": (1, 1, 4),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
