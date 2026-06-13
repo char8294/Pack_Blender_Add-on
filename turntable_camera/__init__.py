@@ -41,6 +41,10 @@ GITHUB_API_CONTENTS = (
     f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
     f"/contents/{GITHUB_ADDON_FOLDER}"
 )
+GITHUB_CHANGELOG_URL = (
+    f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}"
+    f"/main/{GITHUB_ADDON_FOLDER}/CHANGELOG.md"
+)
 
 _update_info = {
     "checked": False,
@@ -48,6 +52,7 @@ _update_info = {
     "current_version": (0, 0, 0),
     "latest_version": (0, 0, 0),
     "error": "",
+    "changelog": [],
 }
 
 # =====================================================================
@@ -972,6 +977,19 @@ class TURNTABLE_OT_check_update(Operator):
             _update_info["has_update"] = latest > bl_info["version"]
             _update_info["checked"] = True
 
+            # ถ้ามีอัปเดต ให้พยายามดึงข้อมูล CHANGELOG.md มาแสดงด้วย
+            if _update_info["has_update"]:
+                try:
+                    req_cl = urllib.request.Request(GITHUB_CHANGELOG_URL)
+                    req_cl.add_header('User-Agent', 'Blender-Addon-Updater')
+                    with urllib.request.urlopen(req_cl, timeout=5) as res_cl:
+                        cl_content = res_cl.read().decode('utf-8')
+                        lines = [line.strip() for line in cl_content.split('\n') if line.strip()]
+                        # เก็บข้อความ 5 บรรทัดแรก เพื่อไม่ให้ล้น UI
+                        _update_info["changelog"] = lines[:5]
+                except:
+                    pass
+
         except urllib.error.URLError as e:
             _update_info["error"] = f"ไม่สามารถเชื่อมต่อ: {e.reason}"
             _update_info["checked"] = True
@@ -1016,6 +1034,15 @@ class TURNTABLE_OT_update_popup(Operator):
             box = layout.box()
             box.label(text="มีเวอร์ชันใหม่!", icon='INFO')
             
+            # แสดงสิ่งที่อัปเดต (ถ้ามี)
+            if info.get("changelog"):
+                box.separator()
+                box.label(text="What's New:", icon='TEXT')
+                col = box.column(align=True)
+                for line in info["changelog"]:
+                    col.label(text=line)
+                box.separator()
+
             # อธิบายให้ผู้ใช้ทราบว่าอัปเดตเสร็จต้องทำอะไรต่อ
             box.label(text="* เมื่อกด Update Now เสร็จแล้ว", icon='ERROR')
             box.label(text="  โปรด Restart Blender หรือกดปุ่ม 🔄 (Reload Scripts)")
