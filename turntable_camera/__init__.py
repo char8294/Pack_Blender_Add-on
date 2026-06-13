@@ -13,13 +13,14 @@ from bpy.props import (
     IntProperty,
     CollectionProperty,
     StringProperty,
+    BoolProperty,
 )
 from bpy.types import Panel, Operator, PropertyGroup, UIList
 
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 8),
+    "version": (1, 1, 9),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -153,6 +154,12 @@ class TURNTABLE_Properties(PropertyGroup):
     )
 
     # ── Camera Orbit Settings ──
+
+    show_camera_settings: BoolProperty(
+        name="Show Camera Settings",
+        default=True,
+        description="แสดง/ซ่อนการตั้งค่ากล้อง",
+    )
 
     target_object: PointerProperty(
         type=bpy.types.Object,
@@ -1177,27 +1184,34 @@ class TURNTABLE_PT_main_panel(Panel):
         # ── Camera Rotate Mode ──
         if props.mode == 'CAMERA_ROTATE':
             box = layout.box()
-            box.label(text="Camera Rotate Settings", icon='OUTLINER_OB_CAMERA')
+            
+            # Collapsible Header
+            row = box.row()
+            icon = 'TRIA_DOWN' if props.show_camera_settings else 'TRIA_RIGHT'
+            row.prop(props, "show_camera_settings", text="", icon=icon, emboss=False)
+            row.label(text="Camera Settings", icon='OUTLINER_OB_CAMERA')
 
-            box.prop(props, "target_object", text="Target", icon='OBJECT_DATA')
-            box.prop(props, "camera_object", text="Camera", icon='CAMERA_DATA')
-            box.separator(factor=0.5)
+            if props.show_camera_settings:
+                col = box.column()
+                col.prop(props, "target_object", text="Target", icon='OBJECT_DATA')
+                col.prop(props, "camera_object", text="Camera", icon='CAMERA_DATA')
+                col.separator(factor=0.5)
 
-            col = box.column(align=True)
-            col.prop(props, "cam_distance", text="Distance")
-            col.prop(props, "cam_height", text="Height")
-            col.prop(props, "cam_tilt_x", text="Tilt (X)")
+                sub = col.column(align=True)
+                sub.prop(props, "cam_distance", text="Distance")
+                sub.prop(props, "cam_height", text="Height")
+                sub.prop(props, "cam_tilt_x", text="Tilt (X)")
+                col.separator(factor=0.5)
 
-            box.separator(factor=0.5)
+                # Step 1: Create Camera
+                row_cam = col.row(align=True)
+                row_cam.scale_y = 1.4
+                row_cam.operator("turntable.create_camera",
+                             text="Create / Update Camera",
+                             icon='OUTLINER_OB_CAMERA')
+                box.separator()
 
-            # Step 1: Create Camera
-            row = box.row(align=True)
-            row.scale_y = 1.4
-            row.operator("turntable.create_camera",
-                         text="Create / Update Camera",
-                         icon='OUTLINER_OB_CAMERA')
-
-            # Step 2: Start Turntable
+            # Step 2: Start Turntable (อยู่ข้างนอกให้กดง่ายๆ)
             row = box.row(align=True)
             row.scale_y = 1.4
             can_start = (props.target_object is not None and
