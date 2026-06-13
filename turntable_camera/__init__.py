@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 4),
+    "version": (1, 1, 5),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -1045,7 +1045,7 @@ class TURNTABLE_OT_update_popup(Operator):
 
             # อธิบายให้ผู้ใช้ทราบว่าอัปเดตเสร็จต้องทำอะไรต่อ
             box.label(text="* เมื่อกด Update Now เสร็จแล้ว", icon='ERROR')
-            box.label(text="  โปรด Restart Blender หรือกดปุ่ม 🔄 (Reload Scripts)")
+            box.label(text="  โปรด Restart Blender หรือกด F3 พิมพ์ Reload Scripts")
             
             row = box.row()
             row.operator("turntable.do_update",
@@ -1104,7 +1104,7 @@ class TURNTABLE_OT_do_update(Operator):
 
             self.report(
                 {'INFO'},
-                f"อัปเดตเสร็จ! ({updated_count} ไฟล์) กรุณา Restart Blender หรือกดปุ่ม Reload Scripts (🔄)"
+                f"อัปเดตเสร็จ! ({updated_count} ไฟล์) กรุณา Restart Blender หรือกด F3 พิมพ์ Reload Scripts"
             )
 
         except Exception as e:
