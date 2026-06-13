@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 2),
+    "version": (1, 1, 3),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -1107,7 +1107,6 @@ class TURNTABLE_PT_main_panel(Panel):
         row = layout.row(align=True)
         row.prop(props, "mode", text="Mode")
         row.operator("turntable.check_update", text="", icon='WORLD')
-        row.operator("script.reload", text="", icon='FILE_REFRESH')
         layout.separator()
 
         # ── Preset ──
