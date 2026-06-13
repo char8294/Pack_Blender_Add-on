@@ -1,5 +1,10 @@
+v1.1.11
+- ปรับลดระยะห่างระหว่างการตั้งค่า Tilt และปุ่ม Create / Update Camera ให้ชิดกันมากขึ้นเพื่อความสวยงาม
+
+v1.1.10
+
 v1.1.9
-- เพิ่มปุ่มพับเก็บ (Collapsible) สำหรับ Camera Settings ในโหมด Camera Rotate เพื่อประหยัดพื้นที่ UI
+- เพิ่มระบบพับเก็บ (Collapse) การตั้งค่ากล้อง (Distance, Height, Tilt, Create Camera) โดยกดที่ลูกศรหน้าคำว่า Camera เพื่อประหยัดพื้นที่ UI
 
 v1.1.8
 

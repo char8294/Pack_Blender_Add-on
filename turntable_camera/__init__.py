@@ -13,14 +13,13 @@ from bpy.props import (
     IntProperty,
     CollectionProperty,
     StringProperty,
-    BoolProperty,
 )
 from bpy.types import Panel, Operator, PropertyGroup, UIList
 
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 9),
+    "version": (1, 1, 11),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -155,12 +154,6 @@ class TURNTABLE_Properties(PropertyGroup):
 
     # ── Camera Orbit Settings ──
 
-    show_camera_settings: BoolProperty(
-        name="Show Camera Settings",
-        default=True,
-        description="แสดง/ซ่อนการตั้งค่ากล้อง",
-    )
-
     target_object: PointerProperty(
         type=bpy.types.Object,
         name="Target",
@@ -236,6 +229,12 @@ class TURNTABLE_Properties(PropertyGroup):
             ('COLLECTION', "Collection", "เพิ่ม collections ของ selected objects เข้าลิสต์"),
         ],
         default='OBJECT',
+    )
+
+    show_camera_settings: bpy.props.BoolProperty(
+        name="Show Camera Settings",
+        default=True,
+        description="พับ/กาง การตั้งค่าระยะและมุมกล้อง",
     )
 
 
@@ -1140,6 +1139,42 @@ class TURNTABLE_OT_do_update(Operator):
 
 
 # =====================================================================
+#  Assign Operators
+# =====================================================================
+
+class TURNTABLE_OT_assign_target(Operator):
+    """ดึง Object ที่เลือกอยู่ (Active) มาใส่ในช่อง Target"""
+    bl_idname = "turntable.assign_target"
+    bl_label = "Assign Selected to Target"
+
+    def execute(self, context):
+        active = context.view_layer.objects.active
+        if active:
+            context.scene.turntable_props.target_object = active
+            self.report({'INFO'}, f"ตั้งค่า Target เป็น: {active.name}")
+        else:
+            self.report({'WARNING'}, "กรุณาเลือก Object ในหน้าจอก่อน!")
+        return {'FINISHED'}
+
+
+class TURNTABLE_OT_assign_camera(Operator):
+    """ดึง Camera ที่เลือกอยู่ (Active) มาใส่ในช่อง Camera"""
+    bl_idname = "turntable.assign_camera"
+    bl_label = "Assign Selected to Camera"
+
+    def execute(self, context):
+        active = context.view_layer.objects.active
+        if active and active.type == 'CAMERA':
+            context.scene.turntable_props.camera_object = active
+            self.report({'INFO'}, f"ตั้งค่า Camera เป็น: {active.name}")
+        elif active:
+            self.report({'WARNING'}, "Object ที่เลือกไม่ใช่ Camera!")
+        else:
+            self.report({'WARNING'}, "กรุณาเลือก Camera ในหน้าจอก่อน!")
+        return {'FINISHED'}
+
+
+# =====================================================================
 #  UI Panel
 # =====================================================================
 
@@ -1184,34 +1219,36 @@ class TURNTABLE_PT_main_panel(Panel):
         # ── Camera Rotate Mode ──
         if props.mode == 'CAMERA_ROTATE':
             box = layout.box()
+            box.label(text="Camera Rotate Settings", icon='OUTLINER_OB_CAMERA')
+
+            # Target
+            row = box.row(align=True)
+            row.prop(props, "target_object", text="Target", icon='OBJECT_DATA')
+            row.operator("turntable.assign_target", text="", icon='RESTRICT_SELECT_OFF')
             
-            # Collapsible Header
-            row = box.row()
+            # Camera
+            row = box.row(align=True)
             icon = 'TRIA_DOWN' if props.show_camera_settings else 'TRIA_RIGHT'
             row.prop(props, "show_camera_settings", text="", icon=icon, emboss=False)
-            row.label(text="Camera Settings", icon='OUTLINER_OB_CAMERA')
+            row.prop(props, "camera_object", text="Camera", icon='CAMERA_DATA')
+            row.operator("turntable.assign_camera", text="", icon='RESTRICT_SELECT_OFF')
+
+            box.separator(factor=0.5)
 
             if props.show_camera_settings:
-                col = box.column()
-                col.prop(props, "target_object", text="Target", icon='OBJECT_DATA')
-                col.prop(props, "camera_object", text="Camera", icon='CAMERA_DATA')
-                col.separator(factor=0.5)
-
-                sub = col.column(align=True)
-                sub.prop(props, "cam_distance", text="Distance")
-                sub.prop(props, "cam_height", text="Height")
-                sub.prop(props, "cam_tilt_x", text="Tilt (X)")
-                col.separator(factor=0.5)
+                col = box.column(align=True)
+                col.prop(props, "cam_distance", text="Distance")
+                col.prop(props, "cam_height", text="Height")
+                col.prop(props, "cam_tilt_x", text="Tilt (X)")
 
                 # Step 1: Create Camera
-                row_cam = col.row(align=True)
-                row_cam.scale_y = 1.4
-                row_cam.operator("turntable.create_camera",
+                row = box.row(align=True)
+                row.scale_y = 1.4
+                row.operator("turntable.create_camera",
                              text="Create / Update Camera",
                              icon='OUTLINER_OB_CAMERA')
-                box.separator()
 
-            # Step 2: Start Turntable (อยู่ข้างนอกให้กดง่ายๆ)
+            # Step 2: Start Turntable
             row = box.row(align=True)
             row.scale_y = 1.4
             can_start = (props.target_object is not None and
@@ -1307,6 +1344,8 @@ classes = (
     TURNTABLE_OT_check_update,
     TURNTABLE_OT_update_popup,
     TURNTABLE_OT_do_update,
+    TURNTABLE_OT_assign_target,
+    TURNTABLE_OT_assign_camera,
     TURNTABLE_PT_main_panel,
 )
 
