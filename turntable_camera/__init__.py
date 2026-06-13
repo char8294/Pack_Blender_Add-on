@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 5),
+    "version": (1, 1, 6),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -1139,9 +1139,9 @@ class TURNTABLE_PT_main_panel(Panel):
         # ── Preset ──
         box = layout.box()
         box.label(text="Preset", icon='PRESET')
-        box.prop(props, "preset", text="")
-        row = box.row()
-        row.operator("turntable.apply_preset", text="Apply Preset", icon='CHECKMARK')
+        row = box.row(align=True)
+        row.prop(props, "preset", text="")
+        row.operator("turntable.apply_preset", text="Apply", icon='CHECKMARK')
         box.separator(factor=0.5)
 
         # แสดง FPS / Frames (แก้ไขได้)
