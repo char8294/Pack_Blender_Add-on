@@ -19,7 +19,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 11),
+    "version": (1, 1, 20),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -54,6 +54,9 @@ _update_info = {
     "error": "",
     "changelog": [],
 }
+
+MODEL_GRID_LABEL_COLLECTION_NAME = "Turntable_Model_Grid_Labels"
+MODEL_GRID_LABEL_PREFIX = "Turntable_Model_Label_"
 
 # =====================================================================
 #  Preset Data
@@ -99,6 +102,18 @@ def _filter_mesh_armature(self, obj):
 def _filter_camera(self, obj):
     """Filter สำหรับ PointerProperty — แสดงเฉพาะ CAMERA"""
     return obj.type == 'CAMERA'
+
+
+def _sync_preset_values(props):
+    """Update custom FPS / frames from the selected preset."""
+    p = PRESETS.get(props.preset)
+    if p:
+        props.custom_fps = p['fps']
+        props.custom_frames = p['frames']
+
+
+def _on_preset_update(self, context):
+    _sync_preset_values(self)
 
 
 # ── Rotation List Item ──
@@ -150,6 +165,7 @@ class TURNTABLE_Properties(PropertyGroup):
             ('MODERN_60', "Modern 60fps",      "60 fps · 300 frames — ลื่นไหลสุด"),
         ],
         default='MODERN_30',
+        update=_on_preset_update,
     )
 
     # ── Camera Orbit Settings ──
@@ -229,6 +245,92 @@ class TURNTABLE_Properties(PropertyGroup):
             ('COLLECTION', "Collection", "เพิ่ม collections ของ selected objects เข้าลิสต์"),
         ],
         default='OBJECT',
+    )
+
+    model_grid_columns: IntProperty(
+        name="Columns",
+        description="Number of columns for Model Rotate grid layout",
+        default=5,
+        min=1,
+        max=100,
+    )
+
+    model_grid_spacing: FloatProperty(
+        name="Spacing",
+        description="Gap between model bounding boxes in Blender units",
+        default=1.0,
+        min=0.0,
+        soft_max=10.0,
+        step=50,
+        precision=2,
+    )
+
+    model_grid_layout_type: EnumProperty(
+        name="Type",
+        description="How item numbers advance inside the grid",
+        items=[
+            ('TYPE1', "Type 1 - Rightward Rows", "Next number moves to the right on +X"),
+            ('TYPE2', "Type 2 - Legacy Direction", "Use the original axis-based numbering direction"),
+        ],
+        default='TYPE1',
+    )
+
+    model_grid_primary_axis: EnumProperty(
+        name="Axis",
+        description="Plane or direction used for the grid layout",
+        items=[
+            ('HORIZONTAL_X', "Ground Grid", "Rows go right on +X, then continue on +Y"),
+            ('VERTICAL_NZ', "Vertical Stack", "Rows go right on +X, then continue downward on -Z"),
+        ],
+        default='HORIZONTAL_X',
+    )
+
+    model_label_show_name: bpy.props.BoolProperty(
+        name="Create Model Name",
+        description="Display the object or collection name above each grid item",
+        default=False,
+    )
+
+    model_label_show_number: bpy.props.BoolProperty(
+        name="Create Model Number",
+        description="Display the sequence number above each grid item",
+        default=False,
+    )
+
+    model_label_settings_expanded: bpy.props.BoolProperty(
+        name="Create Label",
+        description="Show grid label creation settings",
+        default=False,
+    )
+
+    model_label_font_size: FloatProperty(
+        name="Font Size",
+        description="Size of grid labels in Blender units",
+        default=0.35,
+        min=0.01,
+        soft_max=5.0,
+        step=10,
+        precision=2,
+    )
+
+    model_label_gap: FloatProperty(
+        name="Label Gap",
+        description="Distance between the label and the model bounding box",
+        default=0.20,
+        min=0.0,
+        soft_max=10.0,
+        step=10,
+        precision=2,
+    )
+
+    model_label_position: EnumProperty(
+        name="Position",
+        description="Place grid labels above or below each model",
+        items=[
+            ('TOP', "Top", "Place labels above the model"),
+            ('BOTTOM', "Bottom", "Place labels below the model"),
+        ],
+        default='TOP',
     )
 
     show_camera_settings: bpy.props.BoolProperty(
@@ -332,14 +434,6 @@ def _clean_empty_action(obj):
         obj.animation_data_clear()
 
 
-def _apply_preset(props):
-    """อัปเดต custom_fps / custom_frames ตาม preset ที่เลือก"""
-    p = PRESETS.get(props.preset)
-    if p:
-        props.custom_fps = p['fps']
-        props.custom_frames = p['frames']
-
-
 def _get_or_create_camera(context, props):
     """คืน camera object — ใช้ตัวที่เลือก หรือสร้างใหม่"""
     if props.camera_object and props.camera_object.type == 'CAMERA':
@@ -365,6 +459,244 @@ def _clear_track_to(cam_obj):
     to_remove = [c for c in cam_obj.constraints if c.name == "TurntableTrack"]
     for c in to_remove:
         cam_obj.constraints.remove(c)
+
+
+def _is_model_grid_label(obj):
+    """Return True for labels generated by the Model Rotate grid tool."""
+    return obj.name.startswith(MODEL_GRID_LABEL_PREFIX)
+
+
+def _make_bbox(min_v, max_v):
+    center = (min_v + max_v) * 0.5
+    return {
+        'min': min_v,
+        'max': max_v,
+        'center': center,
+        'dims': max_v - min_v,
+    }
+
+
+def _get_object_world_bbox(obj):
+    """Return world-space bbox data for an object, with a location fallback."""
+    if obj is None or _is_model_grid_label(obj):
+        return None
+
+    try:
+        local_corners = [Vector(corner) for corner in obj.bound_box]
+    except Exception:
+        local_corners = []
+
+    bbox_unavailable = (
+        not local_corners or
+        all(
+            abs(value + 1.0) < 0.000001
+            for corner in local_corners
+            for value in corner
+        )
+    )
+
+    if bbox_unavailable:
+        loc = obj.matrix_world.translation.copy()
+        return _make_bbox(loc.copy(), loc.copy())
+
+    world_corners = [obj.matrix_world @ corner for corner in local_corners]
+    min_v = Vector((
+        min(c.x for c in world_corners),
+        min(c.y for c in world_corners),
+        min(c.z for c in world_corners),
+    ))
+    max_v = Vector((
+        max(c.x for c in world_corners),
+        max(c.y for c in world_corners),
+        max(c.z for c in world_corners),
+    ))
+    return _make_bbox(min_v, max_v)
+
+
+def _combine_bboxes(bboxes):
+    valid = [bbox for bbox in bboxes if bbox is not None]
+    if not valid:
+        return None
+
+    min_v = Vector((
+        min(bbox['min'].x for bbox in valid),
+        min(bbox['min'].y for bbox in valid),
+        min(bbox['min'].z for bbox in valid),
+    ))
+    max_v = Vector((
+        max(bbox['max'].x for bbox in valid),
+        max(bbox['max'].y for bbox in valid),
+        max(bbox['max'].z for bbox in valid),
+    ))
+    return _make_bbox(min_v, max_v)
+
+
+def _get_collection_world_bbox(collection):
+    """Return aggregate bbox for a collection, excluding generated helpers."""
+    if collection is None:
+        return None
+
+    bboxes = []
+    for obj in collection.all_objects:
+        if _is_model_grid_label(obj):
+            continue
+        if obj.name.startswith("Turntable_Rot_"):
+            continue
+        bboxes.append(_get_object_world_bbox(obj))
+
+    return _combine_bboxes(bboxes)
+
+
+def _get_collection_move_roots(collection):
+    """Return root objects to move a collection without breaking hierarchy."""
+    if collection is None:
+        return []
+
+    objects = [
+        obj for obj in collection.all_objects
+        if not _is_model_grid_label(obj)
+    ]
+    object_set = set(objects)
+    return [obj for obj in objects if obj.parent not in object_set]
+
+
+def _move_objects_by_delta(objects, delta):
+    for obj in objects:
+        matrix = obj.matrix_world.copy()
+        matrix.translation = matrix.translation + delta
+        obj.matrix_world = matrix
+
+
+def _get_rotation_item_grid_data(item):
+    if item.item_type == 'OBJECT':
+        obj = item.target_object
+        if obj is None or obj.type == 'CAMERA':
+            return None
+
+        bbox = _get_object_world_bbox(obj)
+        if bbox is None:
+            return None
+
+        return {
+            'name': obj.name,
+            'bbox': bbox,
+            'move_roots': [obj],
+            'item_type': 'OBJECT',
+        }
+
+    collection = bpy.data.collections.get(item.collection_name)
+    if collection is None:
+        return None
+
+    bbox = _get_collection_world_bbox(collection)
+    move_roots = _get_collection_move_roots(collection)
+    if bbox is None or not move_roots:
+        return None
+
+    return {
+        'name': collection.name,
+        'bbox': bbox,
+        'move_roots': move_roots,
+        'item_type': 'COLLECTION',
+    }
+
+
+def _get_model_grid_offset(index, columns, cell_col, cell_row,
+                           axis, layout_type):
+    col_idx = index % columns
+    row_idx = index // columns
+
+    if layout_type == 'TYPE2' and axis == 'VERTICAL_NZ':
+        primary = Vector((0.0, 0.0, -1.0))
+        secondary = Vector((1.0, 0.0, 0.0))
+    elif layout_type == 'TYPE2':
+        primary = Vector((0.0, 1.0, 0.0))
+        secondary = Vector((1.0, 0.0, 0.0))
+    elif axis == 'VERTICAL_NZ':
+        primary = Vector((1.0, 0.0, 0.0))
+        secondary = Vector((0.0, 0.0, -1.0))
+    else:
+        primary = Vector((1.0, 0.0, 0.0))
+        secondary = Vector((0.0, 1.0, 0.0))
+
+    return (
+        primary * col_idx * cell_col +
+        secondary * row_idx * cell_row
+    )
+
+
+def _get_or_create_model_grid_label_collection(context):
+    collection = bpy.data.collections.get(MODEL_GRID_LABEL_COLLECTION_NAME)
+    if collection is None:
+        collection = bpy.data.collections.new(MODEL_GRID_LABEL_COLLECTION_NAME)
+        context.scene.collection.children.link(collection)
+    elif collection.name not in {
+        child.name for child in context.scene.collection.children
+    }:
+        context.scene.collection.children.link(collection)
+    return collection
+
+
+def _clear_model_grid_labels():
+    collection = bpy.data.collections.get(MODEL_GRID_LABEL_COLLECTION_NAME)
+    if collection is None:
+        return 0
+
+    curves = []
+    removed = 0
+    for obj in list(collection.objects):
+        if not obj.name.startswith(MODEL_GRID_LABEL_PREFIX):
+            continue
+        if obj.type == 'FONT' and obj.data is not None:
+            curves.append(obj.data)
+        bpy.data.objects.remove(obj, do_unlink=True)
+        removed += 1
+
+    for curve in curves:
+        if curve.users == 0:
+            bpy.data.curves.remove(curve)
+
+    return removed
+
+
+def _create_model_grid_label(collection, index, item_name, props, bbox):
+    parts = []
+    if props.model_label_show_number:
+        parts.append(f"#{index + 1}")
+    if props.model_label_show_name:
+        parts.append(item_name)
+
+    if not parts:
+        return None
+
+    body = " - ".join(parts)
+    safe_name = bpy.path.clean_name(item_name)
+    text_data = bpy.data.curves.new(
+        name=f"{MODEL_GRID_LABEL_PREFIX}{index + 1:03d}_{safe_name}",
+        type='FONT',
+    )
+    text_data.body = body
+    text_data.align_x = 'CENTER'
+    text_data.align_y = (
+        'BOTTOM' if props.model_label_position == 'TOP' else 'TOP'
+    )
+    text_data.size = props.model_label_font_size
+
+    text_obj = bpy.data.objects.new(
+        name=f"{MODEL_GRID_LABEL_PREFIX}{index + 1:03d}_{safe_name}",
+        object_data=text_data,
+    )
+    collection.objects.link(text_obj)
+
+    center = bbox['center']
+    if props.model_label_position == 'TOP':
+        label_z = bbox['max'].z + props.model_label_gap
+    else:
+        label_z = bbox['min'].z - props.model_label_gap
+
+    text_obj.rotation_euler = (math.pi / 2, 0, 0)
+    text_obj.location = Vector((center.x, center.y, label_z))
+    return text_obj
 
 
 def _get_collection_center(collection):
@@ -506,6 +838,7 @@ class TURNTABLE_UL_rotation_items(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             row = layout.row(align=True)
+            row.label(text=f"{index + 1}.")
 
             if item.item_type == 'OBJECT':
                 obj = item.target_object
@@ -530,19 +863,6 @@ class TURNTABLE_UL_rotation_items(UIList):
 # =====================================================================
 #  Operators
 # =====================================================================
-
-class TURNTABLE_OT_apply_preset(Operator):
-    """โหลดค่า FPS / Frames จากพรีเซ็ตที่เลือก"""
-    bl_idname = "turntable.apply_preset"
-    bl_label = "Apply Preset"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        props = context.scene.turntable_props
-        _apply_preset(props)
-        self.report({'INFO'}, f"Applied preset: {PRESETS[props.preset]['name']}")
-        return {'FINISHED'}
-
 
 # ─────────────────────────────────────────────────────────────────────
 #  Rotation List — Add / Remove Items
@@ -692,6 +1012,99 @@ class TURNTABLE_OT_move_rotation_item(Operator):
             items.move(idx, idx + 1)
             props.rotation_items_index += 1
 
+        return {'FINISHED'}
+
+
+class TURNTABLE_OT_apply_model_grid(Operator):
+    """Arrange Model Rotate items in a grid by moving the original objects."""
+    bl_idname = "turntable.apply_model_grid"
+    bl_label = "Apply Grid Layout"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        props = getattr(context.scene, "turntable_props", None)
+        return (
+            context.mode == 'OBJECT' and
+            props is not None and
+            len(props.rotation_items) > 0
+        )
+
+    def execute(self, context):
+        props = context.scene.turntable_props
+        _clear_model_grid_labels()
+
+        entries = []
+        for item in props.rotation_items:
+            data = _get_rotation_item_grid_data(item)
+            if data is not None:
+                entries.append(data)
+
+        if not entries:
+            self.report({'WARNING'}, "No valid objects or collections to arrange.")
+            return {'CANCELLED'}
+
+        max_dx = max(entry['bbox']['dims'].x for entry in entries)
+        max_dy = max(entry['bbox']['dims'].y for entry in entries)
+        max_dz = max(entry['bbox']['dims'].z for entry in entries)
+        spacing = props.model_grid_spacing
+        axis = props.model_grid_primary_axis
+        layout_type = props.model_grid_layout_type
+
+        if layout_type == 'TYPE2' and axis == 'VERTICAL_NZ':
+            cell_col = max_dz + spacing
+            cell_row = max_dx + spacing
+        elif layout_type == 'TYPE2':
+            cell_col = max_dy + spacing
+            cell_row = max_dx + spacing
+        elif axis == 'VERTICAL_NZ':
+            cell_col = max_dx + spacing
+            cell_row = max_dz + spacing
+        else:
+            cell_col = max_dx + spacing
+            cell_row = max_dy + spacing
+
+        columns = min(props.model_grid_columns, len(entries))
+        origin_center = entries[0]['bbox']['center'].copy()
+
+        for index, entry in enumerate(entries):
+            offset = _get_model_grid_offset(
+                index, columns, cell_col, cell_row, axis, layout_type,
+            )
+            target_center = origin_center + offset
+            delta = target_center - entry['bbox']['center']
+
+            _move_objects_by_delta(entry['move_roots'], delta)
+            entry['final_bbox'] = _make_bbox(
+                entry['bbox']['min'] + delta,
+                entry['bbox']['max'] + delta,
+            )
+
+        context.view_layer.update()
+
+        labels_enabled = (
+            props.model_label_show_name or
+            props.model_label_show_number
+        )
+        if labels_enabled:
+            label_collection = _get_or_create_model_grid_label_collection(
+                context,
+            )
+            for index, entry in enumerate(entries):
+                _create_model_grid_label(
+                    label_collection,
+                    index,
+                    entry['name'],
+                    props,
+                    entry['final_bbox'],
+                )
+
+        rows = math.ceil(len(entries) / columns)
+        self.report(
+            {'INFO'},
+            f"Applied grid layout to {len(entries)} item(s): "
+            f"{columns} x {rows}",
+        )
         return {'FINISHED'}
 
 
@@ -1199,20 +1612,13 @@ class TURNTABLE_PT_main_panel(Panel):
         # ── Preset ──
         box = layout.box()
         box.label(text="Preset", icon='PRESET')
-        split = box.split(factor=0.75, align=True)
-        split.prop(props, "preset", text="")
-        split.operator("turntable.apply_preset", text="Apply")
+        box.prop(props, "preset", text="")
         box.separator(factor=0.5)
 
         # แสดง FPS / Frames (แก้ไขได้)
         row = box.row(align=True)
         row.prop(props, "custom_fps", text="FPS")
         row.prop(props, "custom_frames", text="Frames")
-
-        # แสดง info ของ preset
-        preset_data = PRESETS.get(props.preset)
-        if preset_data:
-            box.label(text=preset_data['desc'], icon='INFO')
 
         layout.separator()
 
@@ -1305,10 +1711,93 @@ class TURNTABLE_PT_main_panel(Panel):
             box.label(text=f"Items: {item_count}  (Objects: {obj_count} / Collections: {col_count})",
                       icon='INFO')
 
-            box.separator(factor=0.5)
+            layout.separator()
+
+            # -- Grid Layout --
+            grid_box = layout.box()
+            grid_box.label(text="Grid Layout", icon='MESH_GRID')
+
+            if item_count > 0:
+                cols = min(props.model_grid_columns, item_count)
+                rows = math.ceil(item_count / cols) if cols > 0 else 0
+                preview = grid_box.row()
+                preview.alignment = 'CENTER'
+                preview.label(text=f"Result: {cols} col x {rows} row",
+                              icon='INFO')
+
+            grid_col = grid_box.column(align=True)
+            grid_col.prop(props, "model_grid_columns", text="Columns")
+            grid_col.prop(props, "model_grid_spacing", text="Spacing")
+
+            axis_type_row = grid_box.row(align=True)
+            axis_type_row.prop(props, "model_grid_primary_axis", text="Axis")
+            axis_type_row.prop(props, "model_grid_layout_type", text="Type")
+
+            grid_box.separator(factor=0.5)
+
+            label_header = grid_box.row(align=True)
+            icon = 'TRIA_DOWN' if props.model_label_settings_expanded else 'TRIA_RIGHT'
+            label_header.prop(
+                props,
+                "model_label_settings_expanded",
+                text="Create Label",
+                icon=icon,
+                emboss=False,
+            )
+
+            if props.model_label_settings_expanded:
+                label_row = grid_box.row(align=True)
+                label_row.prop(
+                    props,
+                    "model_label_show_number",
+                    text="Create Number",
+                )
+                label_row.prop(
+                    props,
+                    "model_label_show_name",
+                    text="Create Name",
+                )
+
+                labels_enabled = (
+                    props.model_label_show_name or
+                    props.model_label_show_number
+                )
+                label_settings = grid_box.column(align=True)
+                label_settings.enabled = labels_enabled
+                label_settings.prop(props, "model_label_font_size", text="Font Size")
+                label_settings.prop(props, "model_label_gap", text="Gap")
+
+                pos_row = label_settings.row(align=True)
+                pos_row.label(text="Position:")
+                pos_row.prop(props, "model_label_position", expand=True)
+
+                if labels_enabled:
+                    parts = []
+                    if props.model_label_show_number:
+                        parts.append("#1")
+                    if props.model_label_show_name:
+                        parts.append("ModelName")
+                    example = " - ".join(parts)
+                    hint = grid_box.row()
+                    hint.alignment = 'CENTER'
+                    hint.label(text=f'e.g. "{example}"', icon='INFO')
+
+            grid_box.separator(factor=0.5)
+
+            apply_row = grid_box.row(align=True)
+            apply_row.scale_y = 1.25
+            apply_row.enabled = item_count > 0
+            apply_row.operator("turntable.apply_model_grid",
+                               text="Apply Grid Layout",
+                               icon='MESH_GRID')
+
+            layout.separator()
 
             # ── Rotate All ──
-            row = box.row(align=True)
+            action_box = layout.box()
+            action_box.label(text="Actions", icon='PLAY')
+
+            row = action_box.row(align=True)
             row.scale_y = 1.4
             row.enabled = item_count > 0
             row.operator("turntable.rotate_models",
@@ -1316,8 +1805,8 @@ class TURNTABLE_PT_main_panel(Panel):
                          icon='PLAY')
 
             # ── Clear ──
-            box.separator(factor=0.5)
-            row = box.row()
+            action_box.separator(factor=0.5)
+            row = action_box.row()
             row.enabled = item_count > 0
             op = row.operator("turntable.clear_animation",
                               text="Clear All Animation",
@@ -1333,10 +1822,10 @@ classes = (
     TURNTABLE_RotationItem,
     TURNTABLE_Properties,
     TURNTABLE_UL_rotation_items,
-    TURNTABLE_OT_apply_preset,
     TURNTABLE_OT_add_selected,
     TURNTABLE_OT_remove_rotation_item,
     TURNTABLE_OT_move_rotation_item,
+    TURNTABLE_OT_apply_model_grid,
     TURNTABLE_OT_create_camera,
     TURNTABLE_OT_start_turntable,
     TURNTABLE_OT_rotate_models,

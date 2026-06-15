@@ -1,32 +1,39 @@
-v1.1.11
-- ปรับลดระยะห่างระหว่างการตั้งค่า Tilt และปุ่ม Create / Update Camera ให้ชิดกันมากขึ้นเพื่อความสวยงาม
+v1.1.20
+- Added Grid Layout to Model Rotate mode using the existing model list.
+- Apply Grid Layout moves original objects and collections directly; it does not create linked duplicates.
+- Added Grid Type options: Type 1 - Rightward Rows and Type 2 - Legacy Direction.
+- Added Axis options: Ground Grid and Vertical Stack.
+- Fixed Horizontal layout so item #2 moves to the right on the +X axis.
+- Fixed Vertical Stack + Type 2 so new rows continue on +X instead of moving backward on Y.
+- Added collapsible Create Label options inside Grid Layout.
+- Labels can now include number, name, custom font size, gap, and top/bottom placement.
+- Added list numbering so Model Rotate items show their sequence clearly.
+- Preset changes now update FPS and Frames immediately; the Apply button was removed.
+- Removed preset description text from the panel for a cleaner UI.
+- Moved the grid Result preview directly under the Grid Layout title.
+- Placed Axis and Type controls on the same row.
 
-v1.1.10
+v1.1.11
+- Improved spacing between Tilt settings and the Create / Update Camera button.
 
 v1.1.9
-- เพิ่มระบบพับเก็บ (Collapse) การตั้งค่ากล้อง (Distance, Height, Tilt, Create Camera) โดยกดที่ลูกศรหน้าคำว่า Camera เพื่อประหยัดพื้นที่ UI
-
-v1.1.8
+- Added collapsible Camera settings for Distance, Height, Tilt, and Create Camera.
 
 v1.1.7
-- เพิ่มระบบตัดบรรทัด (Word Wrap) อัตโนมัติให้หน้าต่างแสดงอัปเดต เพื่อไม่ให้ข้อความ CHANGELOG ยาวทะลุจอ
-
-v1.1.6
-
-v1.1.5
+- Added word wrapping in the update popup so long changelog lines stay readable.
 
 v1.1.4
-- เพิ่มระบบดึงข้อมูลจากไฟล์ CHANGELOG.md บน GitHub มาแสดงในหน้าจออัปเดต เพื่อให้ผู้ใช้ทราบว่ามีฟีเจอร์อะไรใหม่ก่อนกดอัปเดต
+- Added GitHub changelog loading in the update popup.
 
 v1.1.3
-- แก้ไขปัญหา Blender Crash (โปรแกรมค้าง/เด้ง) ขณะทำการอัปเดต โดยยกเลิกการ Reload Scripts อัตโนมัติในเบื้องหลัง
+- Fixed Blender crash risk during update by removing automatic script reload.
 
 v1.1.2
-- นำปุ่ม Reload Scripts ออกจาก UI หน้าต่างหลัก เพื่อความสะอาดตา
+- Removed Reload Scripts from the main UI for a cleaner panel.
 
 v1.1.1
-- เพิ่มระบบ Check Update อัตโนมัติผ่าน GitHub พร้อมดาวน์โหลดไฟล์ใหม่ทันที
-- แก้ไขปัญหาโมเดลผิดตำแหน่งเวลาตั้งค่าให้หมุนแบบ Collection (Pivot Parenting)
-- แก้ไขปัญหาบั๊กเวลาหมุนหลาย Collection พร้อมกันแล้วถูกจับมัดรวมกัน
-- เพิ่มฟีเจอร์ดึง Collection ที่เลือกไว้จาก Outliner เข้าสู่ลิสต์ได้โดยตรงด้วยปุ่ม +
-- เปลี่ยนชื่อโหมดจาก "Camera Orbit" เป็น "Camera Rotate" เพื่อความเข้าใจที่ชัดเจนขึ้น
+- Added GitHub update checking and addon file download.
+- Fixed Collection rotation pivot parenting issues.
+- Fixed multi-collection rotation grouping bugs.
+- Added support for adding selected Outliner collections to the Model Rotate list.
+- Renamed Camera Orbit mode to Camera Rotate for clarity.
