@@ -1,3 +1,33 @@
+v1.1.26
+- Fixed Model Rotate Back-Forth Loop for object items.
+- From/To angles now apply directly, so -22 to 22 creates -22 -> 22 -> -22 instead of accumulating from the current object rotation.
+
+v1.1.25
+- Added an Ease In/Out checkbox for Back-Forth Loop.
+- When enabled, Back-Forth Loop keyframes use Bezier interpolation for smoother acceleration and deceleration.
+- The setting applies to both Camera Rotate and Model Rotate.
+
+v1.1.24
+- Camera Rotate now creates/updates the camera on the -Y side of the target.
+- New cameras start from the front view direction instead of the +X side.
+
+v1.1.23
+- Moved Camera Rotate start and clear buttons into an Actions box.
+- Camera Rotate and Model Rotate now use matching Actions layout.
+
+v1.1.22
+- Moved Rotation Style and Back-Forth range settings into the top Preset/Timing area.
+- Rotation Style now applies to both Camera Rotate and Model Rotate.
+- Camera Rotate now supports Back-Forth Loop using the same From/To angle settings.
+- Camera Rotate and Model Rotate buttons now reflect the selected rotation style.
+
+v1.1.21
+- Added Back-Forth Loop for Model Rotate animations.
+- Back-Forth Loop defaults to swinging from -22 degrees to 22 degrees.
+- Added Rotation Style in the Actions panel: Full 360 Turntable or Back-Forth Loop.
+- Back-Forth Loop works with both object items and collection items.
+- The rotate button now changes label based on the selected rotation style.
+
 v1.1.20
 - Added Grid Layout to Model Rotate mode using the existing model list.
 - Apply Grid Layout moves original objects and collections directly; it does not create linked duplicates.

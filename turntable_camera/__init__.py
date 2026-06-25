@@ -7,6 +7,7 @@ import urllib.request
 import urllib.error
 from mathutils import Vector
 from bpy.props import (
+    BoolProperty,
     EnumProperty,
     FloatProperty,
     PointerProperty,
@@ -19,7 +20,7 @@ from bpy.types import Panel, Operator, PropertyGroup, UIList
 bl_info = {
     "name": "Turntable Camera",
     "author": "TEERA",
-    "version": (1, 1, 20),
+    "version": (1, 1, 26),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Turntable Tab",
     "description": "Turntable animation สำหรับโมเดล: กล้องหมุนรอบโมเดล หรือโมเดลหมุนบนที่ พร้อมพรีเซ็ตกล้องสำเร็จรูป",
@@ -247,6 +248,40 @@ class TURNTABLE_Properties(PropertyGroup):
         default='OBJECT',
     )
 
+    model_rotation_style: EnumProperty(
+        name="Rotation Style",
+        description="Animation style for Camera Rotate and Model Rotate",
+        items=[
+            ('FULL_360', "Full 360 Turntable", "Rotate one full 360 degree loop"),
+            ('BACK_FORTH', "Back-Forth Loop", "Swing between two angles and loop"),
+        ],
+        default='FULL_360',
+    )
+
+    model_back_forth_from: FloatProperty(
+        name="From",
+        description="Starting angle for Back-Forth Loop",
+        default=math.radians(-22.0),
+        min=math.radians(-360.0),
+        max=math.radians(360.0),
+        subtype='ANGLE',
+    )
+
+    model_back_forth_to: FloatProperty(
+        name="To",
+        description="Ending angle for Back-Forth Loop",
+        default=math.radians(22.0),
+        min=math.radians(-360.0),
+        max=math.radians(360.0),
+        subtype='ANGLE',
+    )
+
+    model_back_forth_ease: BoolProperty(
+        name="Ease In/Out",
+        description="Use Bezier interpolation for Back-Forth Loop keyframes",
+        default=False,
+    )
+
     model_grid_columns: IntProperty(
         name="Columns",
         description="Number of columns for Model Rotate grid layout",
@@ -343,6 +378,36 @@ class TURNTABLE_Properties(PropertyGroup):
 # =====================================================================
 #  Helper Functions
 # =====================================================================
+
+def _set_fcurve_interpolation(obj, data_path, index, interpolation):
+    """Set F-Curve interpolation while supporting Blender 5.0+ and older actions."""
+    if not obj.animation_data or not obj.animation_data.action:
+        return
+
+    action = obj.animation_data.action
+
+    # 1. Blender 5.0+ Slotted Actions API
+    if hasattr(action, "fcurve_ensure_for_datablock"):
+        try:
+            fc = action.fcurve_ensure_for_datablock(
+                datablock=obj,
+                data_path=data_path,
+                index=index,
+            )
+            if fc:
+                for kp in fc.keyframe_points:
+                    kp.interpolation = interpolation
+                return
+        except Exception:
+            pass
+
+    # 2. Blender 4.x/3.x Legacy API
+    if hasattr(action, "fcurves"):
+        for fc in action.fcurves:
+            if fc.data_path == data_path and fc.array_index == index:
+                for kp in fc.keyframe_points:
+                    kp.interpolation = interpolation
+
 
 def _set_fcurve_linear_interpolation(obj, data_path, index):
     """ตั้งค่า interpolation ของ F-Curve ที่กำหนดให้เป็น LINEAR โดยรองรับทั้ง Blender 5.0+ และเวอร์ชันเก่า"""
@@ -735,8 +800,33 @@ def _rotate_single_object(obj, total_frames):
     _set_fcurve_linear_interpolation(obj, "rotation_euler", 2)
 
 
-def _rotate_collection_as_group(context, collection, total_frames):
-    """สร้าง Empty Pivot ตรงกลาง Collection แล้ว Parent ทุก object → หมุน Pivot"""
+def _get_back_forth_middle_frame(total_frames):
+    return max(2, int(round((total_frames + 2) * 0.5)))
+
+
+def _rotate_single_object_back_forth(obj, total_frames, angle_from, angle_to,
+                                     use_ease=False):
+    """ใส่ keyframe rotation Z แบบแกว่งไปกลับให้ object เดี่ยว"""
+    _remove_fcurve(obj, "rotation_euler", 2)
+
+    middle_frame = _get_back_forth_middle_frame(total_frames)
+    end_frame = total_frames + 1
+
+    obj.rotation_euler.z = angle_from
+    obj.keyframe_insert(data_path="rotation_euler", index=2, frame=1)
+
+    obj.rotation_euler.z = angle_to
+    obj.keyframe_insert(data_path="rotation_euler", index=2, frame=middle_frame)
+
+    obj.rotation_euler.z = angle_from
+    obj.keyframe_insert(data_path="rotation_euler", index=2, frame=end_frame)
+
+    interpolation = 'BEZIER' if use_ease else 'LINEAR'
+    _set_fcurve_interpolation(obj, "rotation_euler", 2, interpolation)
+
+
+def _prepare_collection_rotation_pivot(context, collection):
+    """สร้าง Empty Pivot ตรงกลาง Collection แล้ว Parent ทุก object → Pivot"""
     # ── สร้างหรือใช้ Pivot Empty เดิม ──
     pivot_name = f"Turntable_Rot_{collection.name}"
     pivot = bpy.data.objects.get(pivot_name)
@@ -791,7 +881,13 @@ def _rotate_collection_as_group(context, collection, total_frames):
             pass
         pivot.animation_data_clear()
 
-    # ── Keyframe Pivot rotation Z ──
+    return pivot
+
+
+def _rotate_collection_as_group(context, collection, total_frames):
+    """ใส่ keyframe rotation Z 360° ให้ collection เป็นกลุ่ม"""
+    pivot = _prepare_collection_rotation_pivot(context, collection)
+
     pivot.rotation_euler = (0, 0, 0)
     pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=1)
 
@@ -799,6 +895,27 @@ def _rotate_collection_as_group(context, collection, total_frames):
     pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=total_frames + 1)
 
     _set_fcurve_linear_interpolation(pivot, "rotation_euler", 2)
+    return pivot
+
+
+def _rotate_collection_back_forth(context, collection, total_frames,
+                                  angle_from, angle_to, use_ease=False):
+    """ใส่ keyframe rotation Z แบบแกว่งไปกลับให้ collection เป็นกลุ่ม"""
+    pivot = _prepare_collection_rotation_pivot(context, collection)
+    middle_frame = _get_back_forth_middle_frame(total_frames)
+    end_frame = total_frames + 1
+
+    pivot.rotation_euler = (0, 0, angle_from)
+    pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=1)
+
+    pivot.rotation_euler.z = angle_to
+    pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=middle_frame)
+
+    pivot.rotation_euler.z = angle_from
+    pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=end_frame)
+
+    interpolation = 'BEZIER' if use_ease else 'LINEAR'
+    _set_fcurve_interpolation(pivot, "rotation_euler", 2, interpolation)
     return pivot
 
 
@@ -1135,8 +1252,8 @@ class TURNTABLE_OT_create_camera(Operator):
 
         # ── ตำแหน่งกล้อง ──
         target_loc = target.matrix_world.translation.copy()
-        cam_obj.location.x = target_loc.x + props.cam_distance
-        cam_obj.location.y = target_loc.y
+        cam_obj.location.x = target_loc.x
+        cam_obj.location.y = target_loc.y - props.cam_distance
         cam_obj.location.z = target_loc.z + props.cam_height
 
         # ── ลบ constraint เดิม แล้วเพิ่มใหม่ ──
@@ -1185,6 +1302,8 @@ class TURNTABLE_OT_start_turntable(Operator):
 
         total_frames = props.custom_frames
         fps = props.custom_fps
+        rotation_style = props.model_rotation_style
+        use_ease = props.model_back_forth_ease
         target_loc = target.matrix_world.translation.copy()
 
         # ── สร้างหรือใช้ Empty Pivot ──
@@ -1211,15 +1330,41 @@ class TURNTABLE_OT_start_turntable(Operator):
                 pass
             pivot.animation_data_clear()
 
-        # ── Keyframe Pivot rotation Z ──
-        pivot.rotation_euler = (0, 0, 0)
-        pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=1)
+        if rotation_style == 'BACK_FORTH':
+            middle_frame = _get_back_forth_middle_frame(total_frames)
+            end_frame = total_frames + 1
 
-        pivot.rotation_euler.z = math.radians(360)
-        pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=total_frames + 1)
+            pivot.rotation_euler = (0, 0, props.model_back_forth_from)
+            pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=1)
+
+            pivot.rotation_euler.z = props.model_back_forth_to
+            pivot.keyframe_insert(
+                data_path="rotation_euler",
+                index=2,
+                frame=middle_frame,
+            )
+
+            pivot.rotation_euler.z = props.model_back_forth_from
+            pivot.keyframe_insert(
+                data_path="rotation_euler",
+                index=2,
+                frame=end_frame,
+            )
+        else:
+            # ── Keyframe Pivot rotation Z ──
+            pivot.rotation_euler = (0, 0, 0)
+            pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=1)
+
+            pivot.rotation_euler.z = math.radians(360)
+            pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=total_frames + 1)
 
         # ── ตั้ง interpolation = LINEAR ──
-        _set_fcurve_linear_interpolation(pivot, "rotation_euler", 2)
+        interpolation = (
+            'BEZIER'
+            if rotation_style == 'BACK_FORTH' and use_ease
+            else 'LINEAR'
+        )
+        _set_fcurve_interpolation(pivot, "rotation_euler", 2, interpolation)
 
         # ── ตั้งค่า Scene ──
         scene.render.fps = fps
@@ -1227,8 +1372,13 @@ class TURNTABLE_OT_start_turntable(Operator):
         scene.frame_end = total_frames
         scene.frame_current = 1
 
+        style_label = (
+            "Back-Forth Loop"
+            if rotation_style == 'BACK_FORTH'
+            else "Full 360 Turntable"
+        )
         self.report({'INFO'},
-                    f"Turntable พร้อม! {total_frames} frames @ {fps} fps — "
+                    f"{style_label}: {total_frames} frames @ {fps} fps — "
                     f"กล้อง '{cam_obj.name}' หมุนรอบ '{target.name}'")
         return {'FINISHED'}
 
@@ -1253,6 +1403,10 @@ class TURNTABLE_OT_rotate_models(Operator):
         scene = context.scene
         total_frames = props.custom_frames
         fps = props.custom_fps
+        rotation_style = props.model_rotation_style
+        angle_from = props.model_back_forth_from
+        angle_to = props.model_back_forth_to
+        use_ease = props.model_back_forth_ease
         obj_count = 0
         col_count = 0
 
@@ -1261,14 +1415,25 @@ class TURNTABLE_OT_rotate_models(Operator):
                 obj = item.target_object
                 if obj is None:
                     continue
-                _rotate_single_object(obj, total_frames)
+                if rotation_style == 'BACK_FORTH':
+                    _rotate_single_object_back_forth(
+                        obj, total_frames, angle_from, angle_to, use_ease,
+                    )
+                else:
+                    _rotate_single_object(obj, total_frames)
                 obj_count += 1
 
             elif item.item_type == 'COLLECTION':
                 col = bpy.data.collections.get(item.collection_name)
                 if col is None:
                     continue
-                _rotate_collection_as_group(context, col, total_frames)
+                if rotation_style == 'BACK_FORTH':
+                    _rotate_collection_back_forth(
+                        context, col, total_frames, angle_from, angle_to,
+                        use_ease,
+                    )
+                else:
+                    _rotate_collection_as_group(context, col, total_frames)
                 col_count += 1
 
         # ── ตั้งค่า Scene ──
@@ -1277,8 +1442,13 @@ class TURNTABLE_OT_rotate_models(Operator):
         scene.frame_end = total_frames
         scene.frame_current = 1
 
+        style_label = (
+            "Back-Forth Loop"
+            if rotation_style == 'BACK_FORTH'
+            else "Full 360 Turntable"
+        )
         self.report({'INFO'},
-                    f"หมุน {obj_count} objects + {col_count} collections — "
+                    f"{style_label}: {obj_count} objects + {col_count} collections — "
                     f"{total_frames} frames @ {fps} fps")
         return {'FINISHED'}
 
@@ -1620,6 +1790,15 @@ class TURNTABLE_PT_main_panel(Panel):
         row.prop(props, "custom_fps", text="FPS")
         row.prop(props, "custom_frames", text="Frames")
 
+        box.separator(factor=0.5)
+        box.prop(props, "model_rotation_style", text="Rotation Style")
+
+        if props.model_rotation_style == 'BACK_FORTH':
+            range_row = box.row(align=True)
+            range_row.prop(props, "model_back_forth_from", text="From")
+            range_row.prop(props, "model_back_forth_to", text="To")
+            box.prop(props, "model_back_forth_ease", text="Ease In/Out")
+
         layout.separator()
 
         # ── Camera Rotate Mode ──
@@ -1654,19 +1833,28 @@ class TURNTABLE_PT_main_panel(Panel):
                              text="Create / Update Camera",
                              icon='OUTLINER_OB_CAMERA')
 
-            # Step 2: Start Turntable
-            row = box.row(align=True)
+            layout.separator()
+
+            # ── Actions ──
+            action_box = layout.box()
+            action_box.label(text="Actions", icon='PLAY')
+
+            row = action_box.row(align=True)
             row.scale_y = 1.4
             can_start = (props.target_object is not None and
                          props.camera_object is not None)
             row.enabled = can_start
+            start_text = (
+                "Create Back-Forth Loop"
+                if props.model_rotation_style == 'BACK_FORTH'
+                else "Start Turntable"
+            )
             row.operator("turntable.start_turntable",
-                         text="Start Turntable",
+                         text=start_text,
                          icon='PLAY')
 
-            # Clear
-            box.separator(factor=0.5)
-            row = box.row()
+            action_box.separator(factor=0.5)
+            row = action_box.row()
             op = row.operator("turntable.clear_animation",
                               text="Clear Animation",
                               icon='TRASH')
@@ -1800,8 +1988,13 @@ class TURNTABLE_PT_main_panel(Panel):
             row = action_box.row(align=True)
             row.scale_y = 1.4
             row.enabled = item_count > 0
+            rotate_text = (
+                "Create Back-Forth Loop"
+                if props.model_rotation_style == 'BACK_FORTH'
+                else "Rotate All"
+            )
             row.operator("turntable.rotate_models",
-                         text="Rotate All",
+                         text=rotate_text,
                          icon='PLAY')
 
             # ── Clear ──
